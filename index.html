@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Chat Reply Bot</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+:root{--bg:#F3F5F9;--ink:#0F1B33;--card:#fff;--line:#CBD3E1;--red:#E5262E;--ok:#1F9D74;--mute:#5B6785}
+@media(prefers-color-scheme:dark){:root{--bg:#0E1424;--ink:#E9EEF8;--card:#172036;--line:#2B3858;--mute:#93A0BE}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Bricolage Grotesque',system-ui,sans-serif;line-height:1.5}
+main{max-width:760px;margin:0 auto;padding:20px 16px 60px}
+header{display:flex;align-items:center;gap:14px;margin-bottom:22px}
+#logo{width:64px;height:64px;border-radius:14px;object-fit:cover;background:var(--line);flex:none}
+h1{font-size:1.6rem;margin:0;font-weight:800;letter-spacing:-.02em}
+.sub{color:var(--mute);font-size:.9rem}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px}
+h2{font-size:1rem;margin:0 0 10px;font-weight:600}
+label{display:block;font-size:.85rem;color:var(--mute);margin:10px 0 3px}
+input,textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--ink);font:inherit}
+textarea{min-height:90px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.hidden{display:none}
+button{font:inherit;font-weight:600;padding:10px 16px;border-radius:8px;border:1px solid var(--ink);background:transparent;color:var(--ink);cursor:pointer}
+button.go{background:var(--red);border-color:var(--red);color:#fff}
+button:disabled{opacity:.5;cursor:default}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--red);outline-offset:2px}
+.bar{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+#status{display:flex;align-items:center;gap:8px;font-weight:600}
+#dot{width:10px;height:10px;border-radius:50%;background:var(--mute)}
+#dot.on{background:var(--red);box-shadow:0 0 0 4px rgba(229,38,46,.2)}
+#log{height:300px;overflow:auto;font-size:.85rem;border:1px solid var(--line);border-radius:8px;padding:8px}
+#log div{padding:4px 0;border-bottom:1px solid var(--line)}
+.q{color:var(--mute)}.a{color:var(--ok)}.e{color:var(--red)}
+@media(max-width:520px){.row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <img id="logo" alt="Logo" src="logo.png" onerror="this.style.visibility='hidden'">
+  <div><h1 id="title">Live Chat Reply Bot</h1><div class="sub">AI answers for every message in your live chat</div></div>
+</header>
+
+<section>
+  <h2>Branding</h2>
+  <div class="row">
+    <div><label for="logoFile">Choose a logo (png/jpg)</label><input type="file" id="logoFile" accept="image/*"></div>
+    <div><label for="ttl">Page title</label><input id="ttl" placeholder="My Live Bot"></div>
+  </div>
+</section>
+
+<section>
+  <h2>Setup</h2>
+  <div id="wcid"><label for="cid">Google OAuth Client ID</label><input id="cid" placeholder="xxxx.apps.googleusercontent.com"></div>
+  <div id="wgkey"><label for="gkey">Gemini API key</label><input id="gkey" type="password" autocomplete="off"></div>
+  <div class="row">
+    <div><label for="model">Gemini model</label><input id="model"></div>
+    <div><label for="vid">Live video ID (leave empty to use your active live)</label><input id="vid" placeholder="dQw4w9WgXcQ"></div>
+    <div><label for="gap">Gap between replies (seconds)</label><input id="gap" type="number" value="4" min="2"></div>
+    <div><label for="max">Max replies (protects your quota)</label><input id="max" type="number" value="150" min="1"></div>
+  </div>
+  <label for="persona">Bot style</label>
+  <textarea id="persona">You are a friendly assistant for a YouTube live stream. Reply in the same language the viewer uses (English, Hindi or Hinglish). Keep every answer under 180 characters. Politely refuse abusive or harmful requests.</textarea>
+  <div class="bar">
+    <button id="login">Sign in with Google</button>
+    <button id="start" class="go" disabled>Start</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+</section>
+
+<section>
+  <div id="status"><span id="dot"></span><span id="st">Sign in to begin</span></div>
+  <div class="sub" id="cnt">Replies: 0</div>
+  <h2 style="margin-top:12px">Log</h2>
+  <div id="log"></div>
+</section>
+</main>
+
+<script>
+/* ===== SET THESE ONCE, then you never have to type them again =====
+   CLIENT_ID is safe to keep here (it is public by design).
+   GEMINI_KEY: if you put it here, restrict it to your github.io domain
+   in Google AI Studio / Cloud Console (HTTP referrer restriction). */
+const CONFIG={
+  CLIENT_ID:'',
+  GEMINI_KEY:'',
+  MODEL:'gemini-2.5-flash'
+};
+
+const $=id=>document.getElementById(id);
+const FIELDS=['cid','gkey','model','vid','gap','max','persona','ttl'];
+const save=()=>{try{FIELDS.forEach(f=>{if(f==='cid'&&CONFIG.CLIENT_ID)return;if(f==='gkey'&&CONFIG.GEMINI_KEY)return;localStorage.setItem('lb_'+f,$(f).value)})}catch(e){}};
+try{
+  FIELDS.forEach(f=>{const v=localStorage.getItem('lb_'+f);if(v!==null)$(f).value=v});
+  const lg=localStorage.getItem('lb_logo');if(lg){$('logo').src=lg;$('logo').style.visibility='visible'}
+}catch(e){}
+if(CONFIG.CLIENT_ID){$('cid').value=CONFIG.CLIENT_ID;$('wcid').classList.add('hidden')}
+if(CONFIG.GEMINI_KEY){$('gkey').value=CONFIG.GEMINI_KEY;$('wgkey').classList.add('hidden')}
+if(!$('model').value)$('model').value=CONFIG.MODEL;
+if($('ttl').value)$('title').textContent=$('ttl').value;
+FIELDS.forEach(f=>$(f).addEventListener('input',()=>{save();if(f==='ttl')$('title').textContent=$('ttl').value||'Live Chat Reply Bot'}));
+
+$('logoFile').onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{$('logo').src=r.result;$('logo').style.visibility='visible';try{localStorage.setItem('lb_logo',r.result)}catch(e){log('Logo is too large. Use a smaller file, or put logo.png in the repo.','e')}};
+  r.readAsDataURL(f);
+};
+
+function log(t,c=''){const d=document.createElement('div');d.className=c;d.textContent=t;$('log').prepend(d)}
+function setSt(t,on){$('st').textContent=t;$('dot').className=on?'on':''}
+
+let token=null,running=false,queue=[],seen=new Set(),replies=0,me=null,chatId=null,pageToken=null,first=true;
+
+$('login').onclick=()=>{
+  const cid=$('cid').value.trim();
+  if(!cid||!window.google){log('Add your Client ID, then try again.','e');return}
+  google.accounts.oauth2.initTokenClient({
+    client_id:cid,
+    scope:'https://www.googleapis.com/auth/youtube.force-ssl',
+    callback:r=>{
+      if(r.error){log('Sign-in failed: '+r.error,'e');return}
+      token=r.access_token;$('start').disabled=false;setSt('Signed in. Press Start.',false);
+    }
+  }).requestAccessToken();
+};
+
+async function yt(path,opt={}){
+  const r=await fetch('https://www.googleapis.com/youtube/v3/'+path,{...opt,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'}});
+  if(r.status===401){token=null;running=false;setSt('Session expired. Sign in again.',false);throw new Error('Token expired (this happens after 1 hour).')}
+  const j=await r.json();
+  if(!r.ok)throw new Error(j.error?.message||r.status);
+  return j;
+}
+
+async function findChat(){
+  const v=$('vid').value.trim();
+  if(v){
+    const j=await yt('videos?part=liveStreamingDetails&id='+encodeURIComponent(v));
+    return j.items?.[0]?.liveStreamingDetails?.activeLiveChatId;
+  }
+  const j=await yt('liveBroadcasts?part=snippet&broadcastStatus=active&broadcastType=all&mine=true');
+  return j.items?.[0]?.snippet?.liveChatId;
+}
+
+let fallbacks=[];
+async function loadModels(){
+  try{
+    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=100&key='+$('gkey').value.trim());
+    const j=await r.json();
+    fallbacks=(j.models||[]).filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')&&/flash/.test(m.name)&&!/image|tts|live|audio|embed|preview-0|exp/.test(m.name)).map(m=>m.name.replace('models/','')).slice(0,6);
+    if(fallbacks.length)log('Backup models: '+fallbacks.join(', '),'a');
+  }catch(e){}
+}
+
+async function askAI(q,name){
+  const key=$('gkey').value.trim(),primary=$('model').value.trim();
+  const list=[primary,...fallbacks.filter(m=>m!==primary).slice(0,4)];
+  let lastErr;
+  for(const model of list){
+    for(let i=0;i<2;i++){
+      const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          systemInstruction:{parts:[{text:$('persona').value}]},
+          contents:[{role:'user',parts:[{text:`Viewer ${name} asked: ${q}`}]}]
+        })
+      });
+      const j=await r.json();
+      if(r.ok){
+        if(model!==primary)log('Answered with backup model: '+model,'a');
+        return (j.candidates?.[0]?.content?.parts?.map(p=>p.text).join('')||'').replace(/\s+/g,' ').trim();
+      }
+      lastErr=new Error(j.error?.message||'AI error');
+      if([429,500,503].includes(r.status)){await sleep(2000);continue} // busy: retry, then next model
+      if([400,403,404].includes(r.status)&&model!==list[list.length-1])break; // bad model: try next
+      throw lastErr;
+    }
+  }
+  throw lastErr;
+}
+
+async function post(text){
+  await yt('liveChat/messages?part=snippet',{method:'POST',body:JSON.stringify({
+    snippet:{liveChatId:chatId,type:'textMessageEvent',textMessageDetails:{messageText:text}}})});
+}
+
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+async function worker(){
+  while(running){
+    const m=queue.shift();
+    if(!m){await sleep(500);continue}
+    if(replies>=+$('max').value){log('Max replies reached. Bot stopped.','e');stop();break}
+    try{
+      log(`${m.name}: ${m.text}`,'q');
+      const ans=await askAI(m.text,m.name);
+      if(!ans)continue;
+      let out=`@${m.name} ${ans}`;
+      if(out.length>200)out=out.slice(0,197)+'...';
+      await post(out);
+      replies++;$('cnt').textContent='Replies: '+replies;
+      log('→ '+out,'a');
+    }catch(e){log(e.message,'e')}
+    await sleep(Math.max(2,+$('gap').value)*1000);
+  }
+}
+
+async function poller(){
+  while(running){
+    let wait=6000;
+    try{
+      const j=await yt(`liveChat/messages?liveChatId=${chatId}&part=snippet,authorDetails&maxResults=200`+(pageToken?`&pageToken=${pageToken}`:''));
+      pageToken=j.nextPageToken;
+      wait=Math.max(j.pollingIntervalMillis||6000,5000);
+      for(const it of j.items||[]){
+        if(seen.has(it.id))continue;seen.add(it.id);
+        if(first)continue; // skip old messages
+        if(it.snippet.type!=='textMessageEvent')continue;
+        if(it.authorDetails.channelId===me)continue; // never reply to itself
+        const text=it.snippet.displayMessage||'';
+        if(!text.trim())continue;
+        if(queue.length<20)queue.push({name:it.authorDetails.displayName,text});
+      }
+      first=false;
+    }catch(e){log(e.message,'e')}
+    await sleep(wait);
+  }
+}
+
+$('start').onclick=async()=>{
+  if(!$('gkey').value.trim()){log('Add your Gemini API key.','e');return}
+  try{
+    setSt('Looking for your live chat...',false);
+    me=(await yt('channels?part=id&mine=true')).items?.[0]?.id;
+    chatId=await findChat();
+    if(!chatId){setSt('No active live stream found',false);log('Start your live or enter a video ID.','e');return}
+    await loadModels();
+    running=true;first=true;pageToken=null;queue=[];
+    $('start').disabled=true;$('stop').disabled=false;
+    setSt('LIVE: bot is running',true);log('Bot started.','a');
+    poller();worker();
+  }catch(e){log(e.message,'e');setSt('Error',false)}
+};
+function stop(){running=false;$('start').disabled=!token;$('stop').disabled=true;setSt('Stopped',false)}
+$('stop').onclick=stop;
+</script>
+</body>
+  </html>
+  
